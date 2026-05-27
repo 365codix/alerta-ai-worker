@@ -2,8 +2,7 @@ import asyncio
 import os
 import requests
 import logging
-from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli, JobProcess
-from livekit.agents.pipeline import VoicePipelineAgent
+from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli, AgentSession, Agent
 from livekit.plugins import openai, silero
 
 logging.basicConfig(level=logging.INFO)
@@ -20,7 +19,6 @@ Ejemplo de inicio: "Central de Serenazgo, ¿cuál es su emergencia?"
 """
 
 async def entrypoint(ctx: JobContext):
-    # La IA solo debe unirse a salas de emergencias ("vigia_...")
     if not ctx.room.name.startswith("vigia_"):
         logger.info(f"Ignorando sala {ctx.room.name} (no es de vigia)")
         return
@@ -28,29 +26,25 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"Conectando a sala de emergencia: {ctx.room.name}")
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     
-    # Extraer el ID o token de la llamada desde el nombre de la sala si es necesario
-    # ej: vigia_45 -> 45
     llamada_id = ctx.room.name.replace("vigia_", "")
 
-    # Configurar el Agente con Pipeline Económico y Rápido
-    # STT: OpenAI Whisper (transcripción)
-    # LLM: GPT-4o-mini (Cerebro)
-    # TTS: OpenAI TTS (Voz sintética)
-    agent = VoicePipelineAgent(
+    # Configurar el Agente con la nueva API AgentSession (v1.5+)
+    agent = Agent(
+        instructions=SYSTEM_PROMPT
+    )
+
+    session = AgentSession(
         vad=silero.VAD.load(),
         stt=openai.STT(),
         llm=openai.LLM(model="gpt-4o-mini"),
         tts=openai.TTS(),
-        chat_ctx=openai.ChatContext().append(
-            role="system",
-            text=SYSTEM_PROMPT
-        ),
     )
 
-    agent.start(ctx.room)
+    await session.start(room=ctx.room, agent=agent)
     
     # Saludar al inicio de la llamada
-    await agent.say("Central de Serenazgo, ¿cuál es su emergencia?", allow_interruptions=True)
+    # En la nueva versión, podemos usar el chat ctx o simplemente un evento cuando termine de conectar
+    await asyncio.sleep(1) # breve pausa para asegurar conexión de audio
     
     # Función que se ejecuta cuando el usuario se desconecta o la IA decide terminar
     @ctx.room.on("disconnected")
@@ -59,17 +53,12 @@ async def entrypoint(ctx: JobContext):
         # Opcional: Obtener historial de chat transcrito
         transcript = "\n".join([msg.text for msg in agent.chat_ctx.messages if msg.role in ["user", "assistant"]])
         
-        # Enviar Webhook a Laravel (Tu servidor Hostinger)
         webhook_url = os.getenv("LARAVEL_WEBHOOK_URL")
-        token = os.getenv("CALL_TOKEN", llamada_id) # O extraerlo del participant
+        token = os.getenv("CALL_TOKEN", llamada_id)
         
         if webhook_url:
             try:
-                # Se asume URL formato: https://alerta.civix.pe/inbox/central/vigia/api/llamada/{token}/webhook-ia
-                # Ajusta la URL en tu panel según tu token/logica si es necesario
-                # Por ahora enviamos a la raiz si la tienes configurada entera
                 final_url = f"{webhook_url}/{token}/webhook-ia" 
-                
                 response = requests.post(
                     final_url,
                     json={"transcripcion": transcript},
@@ -82,5 +71,5 @@ async def entrypoint(ctx: JobContext):
 if __name__ == "__main__":
     cli.run_app(WorkerOptions(
         entrypoint_fnc=entrypoint,
-        worker_type="job" # Puede ser 'job' o 'room' 
+        worker_type="job"
     ))
