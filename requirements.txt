@@ -1,4 +1,4 @@
-livekit-agents~=0.8
-livekit-plugins-openai~=0.8
-livekit-plugins-silero~=0.8
+livekit-agents
+livekit-plugins-openai
+livekit-plugins-silero
 requests
