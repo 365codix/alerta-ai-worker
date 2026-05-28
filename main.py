@@ -2,8 +2,9 @@ import asyncio
 import os
 import requests
 import logging
-from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli, AgentSession, Agent
-from livekit.plugins import openai, silero
+from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli
+from livekit.agents.pipeline import VoicePipelineAgent
+from livekit.plugins import openai, silero, deepgram
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vigia-agent")
@@ -46,30 +47,31 @@ async def entrypoint(ctx: JobContext):
     
     llamada_id = ctx.room.name.replace("vigia_", "")
 
-    # Configurar el Agente con la nueva API AgentSession (v1.5+)
-    agent = Agent(
-        instructions=system_prompt
-    )
-
-    session = AgentSession(
+    # Configurar el Agente usando VoicePipelineAgent (nueva API) con Deepgram para ultra baja latencia
+    agent = VoicePipelineAgent(
         vad=silero.VAD.load(),
-        stt=openai.STT(),
+        stt=deepgram.STT(), # Aquí está la magia del streaming rápido
         llm=openai.LLM(model="gpt-4o-mini"),
         tts=openai.TTS(),
+        chat_ctx=None,
     )
 
-    await session.start(room=ctx.room, agent=agent)
+    agent.start(ctx.room)
     
-    # Saludar al inicio de la llamada
-    # En la nueva versión, podemos usar el chat ctx o simplemente un evento cuando termine de conectar
-    await asyncio.sleep(1) # breve pausa para asegurar conexión de audio
+    # Saludar al inicio
+    await asyncio.sleep(1)
+    # Reemplazamos chat_ctx por agent.chat_ctx si queremos inyectar un system prompt local
+    from livekit.agents.llm import ChatContext, ChatMessage
+    chat_ctx = ChatContext()
+    chat_ctx.messages.append(ChatMessage(role="system", content=system_prompt))
+    agent.chat_ctx = chat_ctx
     
     # Función que se ejecuta cuando el usuario se desconecta o la IA decide terminar
     @ctx.room.on("disconnected")
     def on_disconnected():
         logger.info("El ciudadano se ha desconectado o la sala se cerró.")
         # Opcional: Obtener historial de chat transcrito
-        transcript = "\n".join([msg.text for msg in agent.chat_ctx.messages if msg.role in ["user", "assistant"]])
+        transcript = "\n".join([msg.content for msg in agent.chat_ctx.messages if msg.role in ["user", "assistant"]])
         
         webhook_url = os.getenv("LARAVEL_WEBHOOK_URL")
         token = os.getenv("CALL_TOKEN", llamada_token)
