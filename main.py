@@ -2,8 +2,7 @@ import asyncio
 import os
 import requests
 import logging
-from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli
-from livekit.agents.pipeline import VoicePipelineAgent
+from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli, AgentSession, Agent
 from livekit.plugins import openai, silero, deepgram
 
 logging.basicConfig(level=logging.INFO)
@@ -47,31 +46,30 @@ async def entrypoint(ctx: JobContext):
     
     llamada_id = ctx.room.name.replace("vigia_", "")
 
-    # Configurar el Agente usando VoicePipelineAgent (nueva API) con Deepgram para ultra baja latencia
-    agent = VoicePipelineAgent(
-        vad=silero.VAD.load(min_silence_duration=0.4), # Reducimos la espera de 1.2s a 0.4s
-        stt=deepgram.STT(), # Streaming rápido
-        llm=openai.LLM(model="gpt-4o-mini"),
-        tts=openai.TTS(voice="nova"), # Nova es una voz femenina mucho más natural y humana
-        chat_ctx=None,
+    # Volver a AgentSession que es 100% compatible con la versión de Easypanel
+    agent = Agent(
+        instructions=system_prompt
     )
 
-    agent.start(ctx.room)
+    # Configurar el Agente con Deepgram y Nova, y VAD rápido
+    session = AgentSession(
+        vad=silero.VAD.load(min_silence_duration=0.4), # Reducimos la espera a 0.4s
+        stt=deepgram.STT(), # Streaming rápido con Deepgram
+        llm=openai.LLM(model="gpt-4o-mini"),
+        tts=openai.TTS(voice="nova"), # Nova es una voz más natural
+    )
+
+    await session.start(room=ctx.room, agent=agent)
     
     # Saludar al inicio
     await asyncio.sleep(1)
-    # Reemplazamos chat_ctx por agent.chat_ctx si queremos inyectar un system prompt local
-    from livekit.agents.llm import ChatContext, ChatMessage
-    chat_ctx = ChatContext()
-    chat_ctx.messages.append(ChatMessage(role="system", content=system_prompt))
-    agent.chat_ctx = chat_ctx
     
     # Función que se ejecuta cuando el usuario se desconecta o la IA decide terminar
     @ctx.room.on("disconnected")
     def on_disconnected():
         logger.info("El ciudadano se ha desconectado o la sala se cerró.")
         # Opcional: Obtener historial de chat transcrito
-        transcript = "\n".join([msg.content for msg in agent.chat_ctx.messages if msg.role in ["user", "assistant"]])
+        transcript = "\n".join([msg.text for msg in agent.chat_ctx.messages if msg.role in ["user", "assistant"]])
         
         webhook_url = os.getenv("LARAVEL_WEBHOOK_URL")
         token = os.getenv("CALL_TOKEN", llamada_token)
