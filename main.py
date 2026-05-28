@@ -3,7 +3,7 @@ import os
 import requests
 import logging
 from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli, AgentSession, Agent
-from livekit.plugins import openai, silero, deepgram
+from livekit.plugins import openai, silero
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vigia-agent")
@@ -51,12 +51,12 @@ async def entrypoint(ctx: JobContext):
         instructions=system_prompt
     )
 
-    # Configurar el Agente con Deepgram y Nova, y VAD rápido
+    # Configurar el Agente con OpenAI y voz Nova
     session = AgentSession(
-        vad=silero.VAD.load(min_silence_duration=0.4), # Reducimos la espera a 0.4s
-        stt=deepgram.STT(), # Streaming rápido con Deepgram
+        vad=silero.VAD.load(min_silence_duration=0.6), # Silencio moderado
+        stt=openai.STT(), # Volvemos al motor original de OpenAI
         llm=openai.LLM(model="gpt-4o-mini"),
-        tts=openai.TTS(voice="nova"), # Nova es una voz más natural
+        tts=openai.TTS(voice="nova"), # Mantenemos la voz mejorada de Nova
     )
 
     await session.start(room=ctx.room, agent=agent)
