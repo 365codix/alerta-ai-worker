@@ -49,10 +49,10 @@ async def entrypoint(ctx: JobContext):
 
     # Configurar el Agente usando VoicePipelineAgent (nueva API) con Deepgram para ultra baja latencia
     agent = VoicePipelineAgent(
-        vad=silero.VAD.load(),
-        stt=deepgram.STT(), # Aquí está la magia del streaming rápido
+        vad=silero.VAD.load(min_silence_duration=0.4), # Reducimos la espera de 1.2s a 0.4s
+        stt=deepgram.STT(), # Streaming rápido
         llm=openai.LLM(model="gpt-4o-mini"),
-        tts=openai.TTS(),
+        tts=openai.TTS(voice="nova"), # Nova es una voz femenina mucho más natural y humana
         chat_ctx=None,
     )
 
