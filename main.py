@@ -23,6 +23,24 @@ async def entrypoint(ctx: JobContext):
         logger.info(f"Ignorando sala {ctx.room.name} (no es de vigia)")
         return
         
+    llamada_token = ctx.room.name.replace("vigia_", "")
+    webhook_url = os.getenv("LARAVEL_WEBHOOK_URL")
+
+    # 1. Obtener el prompt dinámico desde Laravel
+    system_prompt = SYSTEM_PROMPT # Fallback por si falla
+    if webhook_url:
+        try:
+            # Reemplazar webhook-ia con prompt en la URL base (asumiendo que webhook_url incluye /api/llamada)
+            prompt_url = f"{webhook_url}/{llamada_token}/prompt"
+            response = requests.get(prompt_url, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("success") and data.get("prompt"):
+                    system_prompt = data["prompt"]
+                    logger.info("Prompt dinámico obtenido exitosamente desde Laravel.")
+        except Exception as e:
+            logger.error(f"Error obteniendo prompt desde Laravel: {e}. Usando prompt por defecto.")
+        
     logger.info(f"Conectando a sala de emergencia: {ctx.room.name}")
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     
@@ -30,7 +48,7 @@ async def entrypoint(ctx: JobContext):
 
     # Configurar el Agente con la nueva API AgentSession (v1.5+)
     agent = Agent(
-        instructions=SYSTEM_PROMPT
+        instructions=system_prompt
     )
 
     session = AgentSession(
@@ -54,7 +72,7 @@ async def entrypoint(ctx: JobContext):
         transcript = "\n".join([msg.text for msg in agent.chat_ctx.messages if msg.role in ["user", "assistant"]])
         
         webhook_url = os.getenv("LARAVEL_WEBHOOK_URL")
-        token = os.getenv("CALL_TOKEN", llamada_id)
+        token = os.getenv("CALL_TOKEN", llamada_token)
         
         if webhook_url:
             try:
